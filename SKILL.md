@@ -18,16 +18,16 @@ This is the first thing a new user runs. It sends a license key to their email t
 
 1. Ask the user: "To activate Remote Telegram, I need to send you a license key. What's your email?"
 
-2. Wait for them to type their email in the chat.
+2. Wait for them to type their email in the chat. Save their response as the email address. CRITICAL: You must replace USER_EMAIL in the curl command below with the actual email they typed. Never send the literal text "USER_EMAIL".
 
 3. Call the license key endpoint:
    ```bash
    curl -s -X POST "https://wavpeucoanpboqsthujf.supabase.co/functions/v1/send-license-key" \
      -H "Content-Type: application/json" \
-     -d "{\"email\": \"USER_EMAIL\", \"product_slug\": \"remote-telegram\"}"
+     -d "{\"email\": \"<REPLACE_WITH_ACTUAL_EMAIL>\", \"product_slug\": \"remote-telegram\"}"
    ```
 
-4. If the response contains `"sent": true`, tell the user: "Done! Check your inbox at USER_EMAIL — you should have an email with your license key. Paste it here when you have it."
+4. If the response contains `"sent": true`, tell the user: "Done! Check your inbox at [their actual email] — you should have an email with your license key. Paste it here when you have it."
 
 5. If they say they didn't receive it, call the endpoint again with the same email (it resends the same key).
 
@@ -681,3 +681,4 @@ claude.ai MCP servers (Stripe, Gmail, Supabase, etc.)
 ```
 
 Watchdog runs alongside Claude in the same startup script, checking TCP connections every 10 seconds. If grammy's long-poll connection drops, the watchdog kills Claude, systemd restarts everything in ~5 seconds.
+
