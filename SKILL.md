@@ -179,11 +179,11 @@ Store the Telegram user ID. Move to Question 7.
 
 **Question 7: Model choice**
 
-Ask: "Last question — which Claude model do you want to use? The best option is **Opus 4.6 with 1M context** (`claude-opus-4-6[1m]`). This gives you the smartest model with the largest memory.
+Ask: "Last question — which Claude model do you want to use? The best option is **Opus 4.7 with 1M context** (`claude-opus-4-7[1m]`). This gives you the smartest model with the largest memory.
 
-Press Enter to use Opus 4.6 (recommended), or type a different model name if you prefer."
+Press Enter to use Opus 4.7 (recommended), or type a different model name if you prefer."
 
-Default to `claude-opus-4-6[1m]` if they don't specify.
+Default to `claude-opus-4-7[1m]` if they don't specify.
 
 ---
 
@@ -196,7 +196,7 @@ Before starting installation, display a summary:
 - **VPS:** [user]@[IP]
 - **Bot token:** [first 10 characters]...
 - **Your Telegram ID:** [ID]
-- **Model:** claude-opus-4-6[1m]
+- **Model:** claude-opus-4-7[1m]
 
 Ready to start? This takes about 10 minutes. I'll handle everything on the VPS — just follow along and I'll tell you when I need you to do something."
 
@@ -276,7 +276,7 @@ Write `~/.claude/settings.json`:
 
 ```json
 {
-  "model": "claude-opus-4-6[1m]",
+  "model": "claude-opus-4-7[1m]",
   "skipDangerousModePermissionPrompt": true,
   "enabledPlugins": {
     "telegram@claude-plugins-official": true
@@ -284,7 +284,7 @@ Write `~/.claude/settings.json`:
 }
 ```
 
-Note: `claude-opus-4-6[1m]` enables the 1M context window. Without `[1m]`, you get the default context size.
+Note: `claude-opus-4-7[1m]` enables the 1M context window. Without `[1m]`, you get the default context size.
 
 Tell the user: "Done! Claude is configured to use [chosen model] with the Telegram plugin enabled."
 
