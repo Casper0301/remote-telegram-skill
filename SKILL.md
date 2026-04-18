@@ -14,37 +14,37 @@ Arguments: `activate` | `setup` | `status` | `fix` | `sync`
 
 This is the first thing a new user runs. It sends a license key to their email to verify ownership and activate the skill.
 
-**Flow (works in any AI coding agent — Claude Code, Cursor, Windsurf, etc.):**
-
-DO NOT copy any code block below as-is. Read the instructions and construct the requests yourself.
+**Flow (natural conversation, no forms or questionnaires):**
 
 1. Ask the user: "To activate Remote Telegram, I need to send you a license key. What's your email?"
 
-2. Wait for the user to respond with their email address. Save it — you will need it in the next step.
+2. Wait for them to type their email in the chat.
 
-3. Send a license key to their email. Make an HTTP POST request:
-   - URL: `https://wavpeucoanpboqsthujf.supabase.co/functions/v1/send-license-key`
-   - Header: `Content-Type: application/json`
-   - Body: `{"email": "<the email the user just gave you>", "product_slug": "remote-telegram"}`
-   - Use whatever method your environment supports: `curl`, `fetch`, an HTTP library, etc.
-   - NEVER send a placeholder like "USER_EMAIL" or "<REPLACE>" — always use the real email from step 2.
+3. Call the license key endpoint:
+   ```bash
+   curl -s -X POST "https://wavpeucoanpboqsthujf.supabase.co/functions/v1/send-license-key" \
+     -H "Content-Type: application/json" \
+     -d "{\"email\": \"USER_EMAIL\", \"product_slug\": \"remote-telegram\"}"
+   ```
 
-4. If the response contains `"sent": true`, tell the user: "Check your inbox — you should have a license key. Paste it here when you have it."
+4. If the response contains `"sent": true`, tell the user: "Done! Check your inbox at USER_EMAIL — you should have an email with your license key. Paste it here when you have it."
 
-5. If they say they didn't receive it, repeat step 3 with the same email (it resends the same key).
+5. If they say they didn't receive it, call the endpoint again with the same email (it resends the same key).
 
-6. Wait for the user to paste their license key.
+6. Wait for them to paste the key in the chat.
 
-7. Verify the key. Make an HTTP POST request:
-   - URL: `https://wavpeucoanpboqsthujf.supabase.co/functions/v1/verify-license`
-   - Header: `Content-Type: application/json`
-   - Body: `{"license_key": "<the key the user just pasted>", "product_slug": "remote-telegram"}`
+7. Verify the key by calling:
+   ```bash
+   curl -s -X POST "https://wavpeucoanpboqsthujf.supabase.co/functions/v1/verify-license" \
+     -H "Content-Type: application/json" \
+     -d "{\"license_key\": \"USER_KEY\", \"product_slug\": \"remote-telegram\"}"
+   ```
 
 8. If `"valid": true`, tell them: "Activated! Remote Telegram is ready. Run `/remote-telegram setup` to get started."
 
 9. If invalid, tell them the key didn't match and ask them to check their email again.
 
-**Important:** Keep this conversational. Three messages max: ask email, confirm sent, accept key.
+**Important:** Keep this conversational — no multi-step questionnaires. Three messages max: ask email, confirm sent, accept key.
 
 ---
 
@@ -179,11 +179,11 @@ Store the Telegram user ID. Move to Question 7.
 
 **Question 7: Model choice**
 
-Ask: "Last question — which Claude model do you want to use? The best option is **Opus 4.7 with 1M context** (`claude-opus-4-7[1m]`). This gives you the smartest model with the largest memory.
+Ask: "Last question — which Claude model do you want to use? The best option is **Opus 4.6 with 1M context** (`claude-opus-4-6[1m]`). This gives you the smartest model with the largest memory.
 
-Press Enter to use Opus 4.7 (recommended), or type a different model name if you prefer."
+Press Enter to use Opus 4.6 (recommended), or type a different model name if you prefer."
 
-Default to `claude-opus-4-7[1m]` if they don't specify.
+Default to `claude-opus-4-6[1m]` if they don't specify.
 
 ---
 
@@ -196,7 +196,7 @@ Before starting installation, display a summary:
 - **VPS:** [user]@[IP]
 - **Bot token:** [first 10 characters]...
 - **Your Telegram ID:** [ID]
-- **Model:** claude-opus-4-7[1m]
+- **Model:** claude-opus-4-6[1m]
 
 Ready to start? This takes about 10 minutes. I'll handle everything on the VPS — just follow along and I'll tell you when I need you to do something."
 
@@ -276,7 +276,7 @@ Write `~/.claude/settings.json`:
 
 ```json
 {
-  "model": "claude-opus-4-7[1m]",
+  "model": "claude-opus-4-6[1m]",
   "skipDangerousModePermissionPrompt": true,
   "enabledPlugins": {
     "telegram@claude-plugins-official": true
@@ -284,7 +284,7 @@ Write `~/.claude/settings.json`:
 }
 ```
 
-Note: `claude-opus-4-7[1m]` enables the 1M context window. Without `[1m]`, you get the default context size.
+Note: `claude-opus-4-6[1m]` enables the 1M context window. Without `[1m]`, you get the default context size.
 
 Tell the user: "Done! Claude is configured to use [chosen model] with the Telegram plugin enabled."
 
@@ -650,6 +650,336 @@ Report what was synced.
 
 ---
 
+## VPS Operations Guide
+
+### 🔴 CRITICAL: Set MCP_TIMEOUT=86400
+
+**This is THE most important setting.** Without it, the Telegram bot disconnects every 10-60 seconds and becomes completely unusable.
+
+**Why:** Claude Code has an internal timer that kills MCP servers (including the Telegram plugin's bun process) after 10-60 seconds of stdio pipe "inactivity." But grammy's long-polling IS active — it's just not using the stdio pipe between polls. Claude thinks the server is dead and kills it. This affects:
+- Long operations (worker delegation, large file reads, slow API calls)
+- Idle periods between user messages
+- Any blocking Bash call
+
+**The fix:** Set `MCP_TIMEOUT=86400` (24 hours) as an environment variable before launching `claude --channels`. The daily session reset at 06:00 UTC means the timer never actually fires.
+
+**In the startup script (`~/claude-telegram.sh`):**
+```bash
+MCP_TIMEOUT=86400 claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions &
+```
+
+**If you ever see the bot go silent, disconnect, or stop responding to messages that ARE reaching Telegram (check `getUpdates?offset=-1` for pending), the first thing to check is whether MCP_TIMEOUT is set.**
+
+Symptoms of missing MCP_TIMEOUT:
+- Bot works for a minute, then goes silent
+- Replies never arrive after delegation completes
+- Log shows "plugin disconnected" or "reply tool unavailable"
+- `pgrep -f 'bun server.ts'` returns 0 even though systemd service is active
+
+Reference: GitHub issue anthropics/claude-code#40207 — Claude Code sends SIGTERM to healthy stdio MCP servers after 10-60s on a wall-clock timer.
+
+### Preventing Local Mac Poller Conflicts
+
+If you also have Claude Desktop or Claude Code CLI on your local machine, the Telegram plugin auto-installs there too (the `enabledPlugins` setting syncs across devices). This creates **competing pollers** — two instances polling the same bot token. Telegram only delivers each message to ONE poller (randomly), so ~50% of your messages go to your dead Mac instead of the VPS.
+
+**Symptoms:** Bot responds to some messages but not others. Seems random. Gets worse when you're actively using Claude Desktop.
+
+**Prevention — Mac-side launchd killer:**
+
+Create `~/Library/LaunchAgents/com.claude.kill-telegram-poller.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.claude.kill-telegram-poller</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string><string>-c</string>
+        <string>pkill -f 'bun.*telegram' 2>/dev/null; exit 0</string>
+    </array>
+    <key>StartInterval</key><integer>10</integer>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+```
+
+Then: `launchctl load ~/Library/LaunchAgents/com.claude.kill-telegram-poller.plist`
+
+This kills any local Telegram bun poller every 10 seconds. The VPS becomes the only valid poller.
+
+Also set in local `~/.claude/settings.json`:
+```json
+{
+  "enabledPlugins": { "telegram@claude-plugins-official": false }
+}
+```
+
+And delete local caches that keep reappearing:
+```bash
+rm -rf ~/.claude/plugins/cache/claude-plugins-official/telegram
+rm -rf ~/.claude/channels/telegram
+```
+
+### Re-authenticating Claude on the VPS
+
+When Claude's OAuth token expires (credentials in `~/.claude/.credentials.json`), you need to re-auth. The problem: Claude's TUI doesn't accept paste over SSH properly. The workaround:
+
+1. Stop the telegram service: `sudo systemctl stop claude-telegram.service`
+2. Start Claude in a tmux session: `tmux new-session -d -s auth "claude"`
+3. Navigate the login flow via tmux send-keys:
+   - `tmux send-keys -t auth '/login' Enter`
+   - Wait, then `tmux send-keys -t auth Enter` (selects Claude subscription)
+   - Check for the OAuth URL: `tmux capture-pane -t auth -p | grep https://claude.com`
+4. Open the URL in a local browser, authorize, get the code
+5. Paste the code via tmux: `tmux send-keys -t auth 'THE_CODE' Enter`
+6. Verify: `tmux capture-pane -t auth -p | grep "Logged in"`
+7. Exit and restart: `tmux send-keys -t auth '/exit' Enter` then `sudo systemctl start claude-telegram.service`
+
+**IMPORTANT:** Never use `CLAUDE_CODE_OAUTH_TOKEN` env var — it only has `user:inference` scope, breaks plugins. Always use browser OAuth which stores full-scope credentials in `~/.claude/.credentials.json`.
+
+### Keeping Claude Code Updated
+
+The systemd timer `claude-update.timer` runs daily at 04:00 UTC. The update script at `~/claude-update.sh`:
+- Updates Claude Code CLI via npm
+- Updates Bun
+- Reinstalls Telegram plugin dependencies
+- Restarts the service
+
+To manually update: `sudo systemctl start claude-update.service`
+To check last update: `cat ~/claude-update.log | tail -5`
+
+### Session Context Management
+
+Claude Code sessions accumulate context over time. At ~150K tokens, the session becomes unresponsive. The watchdog detects this by checking the tmux pane for "save tokens" messages every 60 seconds and auto-restarts.
+
+Additionally, the `claude-session-reset.timer` restarts the service daily at 06:00 UTC for a guaranteed fresh session.
+
+To manually reset: `sudo systemctl restart claude-telegram.service`
+
+### Watchdog Architecture
+
+The startup script at `~/claude-telegram.sh` runs FOUR checks every 10 seconds:
+
+1. **Bun process check** — Is the Telegram MCP server (bun server.ts) still running?
+2. **TCP connection check** — Does bun have active ESTAB connections to Telegram's API? Grammy long-polls, so there should ALWAYS be a TCP connection. Two consecutive failures (20s) confirms a stall.
+3. **Context bloat check** (every 60s) — Does the tmux pane show "save tokens"? If yes, the session is full and needs restart.
+4. **MCP disconnect check** (every 60s) — Does the tmux pane show "plugin disconnected", "MCP disconnected", or "reply tool unavailable"? If yes, the MCP pipe broke and needs restart.
+
+On any failure, the watchdog kills Claude, exits with code 1, and systemd `Restart=always` brings everything back in ~20 seconds.
+
+**With `MCP_TIMEOUT=86400` set, check 4 should rarely fire.** If it fires frequently, verify MCP_TIMEOUT is actually in the env when claude launches.
+
+### External Health Guardian (Belt-and-Suspenders)
+
+The built-in watchdog handles most issues, but as backup, a cron job at `/home/clawd/health-guardian.sh` runs every minute and:
+
+1. Checks `systemctl is-active claude-telegram.service`
+2. Checks tmux session exists (`tmux has-session -t telegram`)
+3. Checks bun poller is running (`pgrep -f 'bun server.ts'`)
+4. Checks pending messages via Telegram API (`getUpdates?offset=-1`) — if >0, grammy stalled
+5. On any failure: restart service + send Telegram notification to owner
+
+This catches edge cases the internal watchdog misses (e.g., if the startup script itself crashes before the watchdog loop starts). Install with:
+
+```bash
+(crontab -l 2>/dev/null | grep -v health-guardian; echo '* * * * * /home/clawd/health-guardian.sh') | crontab -
+```
+
+### Syncing Skills, Memory & MCPs Between Mac and VPS
+
+The VPS Claude Code instance and your local Mac share the same Claude account but are separate machines. To keep them in sync, a launchd job on your Mac runs `~/.claude/sync-to-vps.sh` every 15 minutes.
+
+**What gets synced (bi-directional rsync):**
+
+| Item | Local path | VPS path | Direction |
+|------|-----------|----------|-----------|
+| Memory files | `~/.claude/projects/-Users-USERNAME-Projects/memory/` | `/home/clawd/.claude/projects/-home-clawd/memory/` | Both ways |
+| Claude Code skills | `~/.claude/skills/` | `/home/clawd/.claude/skills/` | Both ways |
+| Prompt tracker log | `~/.claude/prompt-tracker.csv` | `/home/clawd/.claude/prompt-tracker.csv` | Merged |
+
+**What does NOT sync (intentional):**
+- `~/.claude/.credentials.json` — per-machine OAuth, never copy
+- `~/.claude/settings.json` — local-only, different plugins enabled per machine
+- `~/.claude/plugins/` — local plugin cache, can cause conflicts if synced (especially Telegram plugin)
+- OpenClaw skills at `~/.openclaw/skills/` — OpenClaw has its own separate system
+- `~/.claude/channels/` — bot tokens live here, must stay per-machine
+
+**The launchd job** (`~/Library/LaunchAgents/com.claude.vps-sync.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.claude.vps-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOUR_USER/.claude/sync-to-vps.sh</string>
+    </array>
+    <key>StartInterval</key><integer>900</integer>
+    <key>RunAtLoad</key><true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>SSH_AUTH_SOCK</key><string>/tmp/ssh-agent.sock</string>
+    </dict>
+</dict>
+</plist>
+```
+
+Load: `launchctl load ~/Library/LaunchAgents/com.claude.vps-sync.plist`
+
+**Force a sync manually:** `~/.claude/sync-to-vps.sh`
+
+### MCP Servers on the VPS
+
+The VPS has its own MCP configuration in `/home/clawd/ha-mcp.json` (or similar). Pass it via `--mcp-config`:
+
+```bash
+claude --channels plugin:telegram@claude-plugins-official \
+       --mcp-config /home/clawd/ha-mcp.json \
+       --dangerously-skip-permissions
+```
+
+**MCPs that work on the VPS:**
+- Cloud-proxied tools via claude.ai (Stripe, Gmail, Calendar, Supabase, Netlify, Notion) — work automatically once the Claude session authenticates with full scopes. No local config needed.
+- Home Assistant via Nabu Casa (URL + long-lived token in ha-mcp.json) — works anywhere
+- Any MCP server that uses network API + token (Fiken, DataForSEO, Hostinger, GitHub, etc.)
+
+**MCPs that DON'T work on the VPS:**
+- Apple Notes, Apple Reminders, macOS Shortcuts — macOS-only
+- Claude in Chrome — needs local browser extension
+- computer-use — needs local display
+- Local file system tools that assume a Mac filesystem layout
+
+**Adding a new MCP on the VPS:**
+
+1. Add the server config to `/home/clawd/ha-mcp.json`:
+   ```json
+   {
+     "mcpServers": {
+       "home-assistant": { "command": "/home/clawd/.local/bin/uvx", "args": ["ha-mcp@latest"], "env": {"HOMEASSISTANT_URL": "...", "HOMEASSISTANT_TOKEN": "..."} },
+       "fiken": { "command": "npx", "args": ["-y", "@casperschive/fiken-mcp"], "env": {"FIKEN_API_TOKEN": "..."} }
+     }
+   }
+   ```
+2. Restart the service: `sudo systemctl restart claude-telegram.service`
+3. Verify the MCP loaded: `tmux capture-pane -t telegram -p | grep -i "MCP server"`
+
+**Integrations that need account-level OAuth (Stripe, Gmail, Calendar, etc.):**
+
+These use the claude.ai MCP proxy. They appear automatically once the VPS Claude session has full OAuth scopes (`user:mcp_servers`). You connect them once at https://claude.ai/settings/connectors and they're available on every machine signed into the same account — no VPS-specific config needed.
+
+**IMPORTANT:** Don't sync `~/.claude/plugins/installed_plugins.json` between machines. Plugin installation is per-machine. Syncing it will cause the Telegram plugin to reinstall on your Mac every time, creating the competing-poller problem.
+
+### Delegation & Worker Spawning
+
+**Don't use `claude -p` to spawn workers from within a `--channels` session.** It breaks the MCP pipe. Instead:
+
+**Use Claude Code's built-in subagents** (the Agent tool). Create agent profiles in `~/.claude/agents/` as markdown files with YAML frontmatter:
+
+```markdown
+---
+name: researcher
+description: Investigate and gather information
+tools: Read, Bash, Glob, Web
+model: sonnet
+---
+You are a research specialist. Investigate thoroughly and return concise findings.
+```
+
+The manager's CLAUDE.md tells it to delegate to these subagents. No subprocesses, no stdio conflicts, no MCP disconnects — everything runs inside the one Claude session.
+
+**If you absolutely must spawn a subprocess** (e.g., cron-triggered background work that doesn't interact with Telegram), use `claude -p` with direct Telegram delivery via curl. Don't try to reply through the MCP pipe after a long-running subprocess:
+
+```bash
+# In your background script, at the end:
+curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+    -d "chat_id=${CHAT_ID}" --data-urlencode "text=${RESULT}"
+```
+
+### systemd Service Overview
+
+List all services and timers:
+```
+sudo systemctl list-timers | grep claude
+sudo systemctl status claude-telegram
+```
+
+| Service | Type | Purpose |
+|---------|------|---------|
+| claude-telegram.service | Main | Runs Claude + watchdog in tmux |
+| claude-update.timer | Daily 04:00 UTC | Updates CLI + Bun + plugin deps |
+| claude-session-reset.timer | Daily 06:00 UTC | Fresh session restart |
+
+### Log Files
+
+| File | What it contains |
+|------|-----------------|
+| ~/watchdog.log | Watchdog restarts (bun dead, polling stall, context full) |
+| ~/claude-update.log | Daily update results |
+
+### Disabling Local Telegram Plugin
+
+If Claude Desktop or local CLI has the Telegram plugin enabled, it steals ALL bot messages (Telegram delivers to only one poller). Check and fix:
+
+```bash
+# Check for local pollers
+pgrep -f 'bun.*telegram'
+
+# Kill them
+pkill -f 'bun.*telegram'
+
+# Permanently disable in local ~/.claude/settings.json:
+# "telegram@claude-plugins-official": false
+
+# Delete local cache
+rm -rf ~/.claude/plugins/cache/claude-plugins-official/telegram
+rm -rf ~/.claude/channels/telegram
+```
+
+### Adding MCP Servers
+
+Extra MCP servers go in `~/ha-mcp.json` (or create a new JSON file). Update the claude command in `~/claude-telegram.sh` to include `--mcp-config`.
+
+Example for Home Assistant via Nabu Casa:
+```json
+{
+  "mcpServers": {
+    "home-assistant": {
+      "command": "/home/USER/.local/bin/uvx",
+      "args": ["ha-mcp@latest"],
+      "env": {
+        "HOMEASSISTANT_URL": "https://YOUR.ui.nabu.casa/",
+        "HOMEASSISTANT_TOKEN": "your-long-lived-token"
+      }
+    }
+  }
+}
+```
+
+Cloud-proxied MCP servers (Stripe, Gmail, Calendar, Supabase, Netlify, Notion) work automatically through the claude.ai proxy — no local config needed.
+
+### Memory Sync
+
+A launchd job on the Mac syncs memory (NOT skills) bidirectionally every 15 minutes via rsync over SSH:
+- Mac memory: `~/.claude/projects/-Users-USERNAME-Projects/memory/`
+- VPS memory: `/home/USER/.claude/projects/-home-USER/memory/`
+
+Skills are also synced but kept separate from OpenClaw's skills at `~/.openclaw/skills/`.
+
+To force sync: `~/.claude/sync-to-vps.sh`
+
+### Whisper Voice Transcription
+
+Voice messages received via Telegram are transcribed using Whisper:
+- Script: `/home/USER/skills/whisper-transcribe.sh` (or `~/.claude/skills/whisper-transcribe/`)
+- Venv: `~/.venvs/whisper/`
+- Models cached: `~/.cache/whisper/` (base, medium, small)
+- Usage: The CLAUDE.md on the VPS instructs Claude to run the script on received audio files
+
+---
+
 ## Known Failure Modes (Hard-Won Lessons)
 
 | Issue | Root Cause | Fix |
@@ -681,4 +1011,3 @@ claude.ai MCP servers (Stripe, Gmail, Supabase, etc.)
 ```
 
 Watchdog runs alongside Claude in the same startup script, checking TCP connections every 10 seconds. If grammy's long-poll connection drops, the watchdog kills Claude, systemd restarts everything in ~5 seconds.
-
